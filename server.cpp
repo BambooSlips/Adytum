@@ -105,6 +105,8 @@ void server::HandleRequest(int conn, string str)
 {
 	char buffer[1024];
 	string name, pass;
+	bool if_login = false;
+	string login_name;
 
 	//连接MySQL数据库
 	MYSQL *con = mysql_init(NULL);
@@ -130,6 +132,49 @@ void server::HandleRequest(int conn, string str)
 		if (!mysql_query(con, search.c_str()))
 		{
 			cout<<mysql_error(con);
+		}
+	}
+	else if(str.find("login")!= str.npos)
+	{
+		int p1 = str.find("login"), p2 = str.find("pass");
+		name = str.substr(p1+5, p2-5);
+		pass = str.substr(p2+5, str.length()-p2-4);
+		string search = "SELECT * FROM user WHERE NAME=\"";
+		search += name;
+		search += "\";";
+		cout<<"sql:"<<search<<endl;
+		auto search_res = mysql_query(con, search.c_str());
+		auto result = mysql_store_result(con);
+		//get numbers of cols and rows
+		int col = mysql_num_fields(result);
+		int row = mysql_num_rows(result);
+		//if username exists
+		if(search_res == 0 && row!= 0)
+		{
+			cout<<"查询到用户名！\n";
+			auto info = mysql_fetch_row(result);	//get the info of a row
+			cout<<"查询到密码为："<<info[1]<<"的用户\""<<info[0]<<"\""<<endl;
+			if(info[1] == pass)
+			{
+				cout<<"The passward is correct!\n";
+				string str1 = "ok";
+				if_login = true;
+				login_name = name;		//record the name of the user logined
+				send(conn, str1.c_str(), str1.length()+1, 0);
+			}
+			else
+			{
+				cout<<"The password is incorrect!\n";
+				char str1[100] = "wrong";
+				send(conn, str1, strlen(str1), 0);
+			}
+		}
+		//the username does not exist
+		else
+		{
+			cout<<"查询失败！\n\n";
+			char str1[100] = "wrong";
+			send(conn, str1, strlen(str1), 0);
 		}
 	}
 }
