@@ -1,7 +1,12 @@
 #include "server.h"
 
 vector<bool> server::sock_arr(1024, false);	//use command "ulimit -n" to check
-server::server(int port, string ip): server_port(port),server_ip(ip) {}
+unordered_map<string, int> server::name_sock_map;
+pthread_mutex_t server::name_sock_mutx;
+server::server(int port, string ip): server_port(port),server_ip(ip) 
+{
+	pthread_mutex_init(&name_sock_mutx, NULL);  //创建互斥锁
+}
 
 //析构
 server::~server() 
@@ -72,41 +77,35 @@ void server::run()
 //不可加static(编译器报错)
 void server::RecvMsg(int conn)
 {
-	//接收缓冲区
+	tuple<bool, string, string, int> info; //if_login login_name target_name target_conn
+	get<0>(info) = false;	//将if_login置false
+	get<3>(info) = -1;	//target_conn置-1
+
 	char buffer[1024];
-	//不断接收数据
 	while(1)
 	{
 		memset(buffer, 0, sizeof(buffer));
 		int len = recv(conn, buffer, sizeof(buffer), 0);
-		//
-		if(strcmp(buffer, "exit") == 0 || len<0)
+		if(strcmp(buffer, "context:exit") == 0 || len <= 0)
 		{
 			close(conn);
 			sock_arr[conn] = false;
 			break;
 		}
-		cout<<"收到套接字的描述符为："<<conn<<"发来消息："<<buffer<<endl;
+		cout<<"收到套接字描述符为"<<conn<<"发来的消息："<<buffer<<endl;
 		string str(buffer);
-		HandleRequest(conn, str);
-		string ans = "copy";
-		int ret = send(conn, ans.c_str(), ans.length(), 0);
-		//
-		if(ret <= 0)
-		{
-			close(conn);
-			sock_arr[conn]=false;
-			break;
-		}
+		HandleRequest(conn, str, info);
 	}
 }
 
-void server::HandleRequest(int conn, string str)
+void server::HandleRequest(int conn, string str, tuple<bool, string, string, int> &info)
 {
 	char buffer[1024];
 	string name, pass;
-	bool if_login = false;
-	string login_name;
+	bool if_login = get<0>(info);			//记录当前服务对象是否成功登录
+	string login_name = get<1>(info);		//记录当前服务对象的名字
+	string target_name = get<2>(info);		//记录当前目标对象的名字
+	int target_conn = get<3>(info);			//目标对象的套接字描述符
 
 	//连接MySQL数据库
 	MYSQL *con = mysql_init(NULL);
@@ -117,6 +116,7 @@ void server::HandleRequest(int conn, string str)
 	}
 
 
+	//注册
 	if(str.find("name:") != str.npos)
 	{
 		int p1 = str.find("name:"), p2=str.find("pass:");
@@ -134,6 +134,7 @@ void server::HandleRequest(int conn, string str)
 			cout<<mysql_error(con);
 		}
 	}
+	//登录
 	else if(str.find("login")!= str.npos)
 	{
 		int p1 = str.find("login"), p2 = str.find("pass");
@@ -154,6 +155,7 @@ void server::HandleRequest(int conn, string str)
 			cout<<"查询到用户名！\n";
 			auto info = mysql_fetch_row(result);	//get the info of a row
 			cout<<"查询到密码为："<<info[1]<<"的用户\""<<info[0]<<"\""<<endl;
+			//密码正确
 			if(info[1] == pass)
 			{
 				cout<<"The passward is correct!\n";
@@ -162,10 +164,11 @@ void server::HandleRequest(int conn, string str)
 				login_name = name;		//record the name of the user logined
 				send(conn, str1.c_str(), str1.length()+1, 0);
 			}
+			//密码错误
 			else
 			{
 				cout<<"The password is incorrect!\n";
-				char str1[100] = "wrong";
+				char str1[6] = "wrong";
 				send(conn, str1, strlen(str1), 0);
 			}
 		}
@@ -173,8 +176,53 @@ void server::HandleRequest(int conn, string str)
 		else
 		{
 			cout<<"查询失败！\n\n";
-			char str1[100] = "wrong";
+			char str1[6] = "wrong";
 			send(conn, str1, strlen(str1), 0);
 		}
 	}
+	//设定目标文件描述符
+	else if(str.find("target:") != str.npos)
+	{
+		int pos1 = str.find("from");
+		string target = str.substr(7, pos1-7), from = str.substr(pos1+4);
+		target_name = target;
+		if (name_sock_map.find(target) == name_sock_map.end())
+			cout<<"源用户"<<login_name<<"，目标用户"<<target_name<<"尚未登录，无法发起私聊\n";
+		else
+		{
+			cout<<"源用户"<<login_name<<"向目标用户"<<target_name<<"发起的私聊将建立";
+			cout<<"，目标用户的套接字描述符为"<<name_sock_map[target]<<endl;
+			target_conn = name_sock_map[target];
+		}
+	}
+	//接收消息并转发
+	else if(str.find("connect:") != str.npos)
+	{
+		if (target_conn == -1)
+		{
+			cout<<"找不到目标用户"<<target_name<<"的套接字，将尝试重新寻找目标用户的套接字\n";
+			if(name_sock_map.find(target_name) != name_sock_map.end())
+			{
+				target_name = name_sock_map[target_name];
+				cout<<"重新查找目标用户套接字成功！\n";
+			}
+			else
+			{
+				cout<<"查找仍失败，转发失败！\n";
+			}
+		}
+
+		string recv_str(str);
+		string send_str = recv_str.substr(8);
+		cout<<"用户"<<login_name<<"向"<<target_name<<"发送："<<send_str<<endl;
+		send_str = "[" + login_name + "]" + send_str;
+		send(target_conn, send_str.c_str(), send_str.length(), 0);
+	}
+
+	//更新
+	get<0>(info) = if_login;
+	get<1>(info) = login_name;
+	get<2>(info) = target_name;
+	get<3>(info) = target_conn;
+
 }

@@ -25,12 +25,14 @@ class server {
 		int server_sockfd;			//置为listen状态的套接字描述符
 		string server_ip;			//服务器ip
 		static vector<bool> sock_arr;		//保存所有套接字描述符
+		static unordered_map<string, int> name_sock_map;	//名字和套接字描述符
+		static pthread_mutex_t name_sock_mutx;			//互斥锁 name_sock_map
 	public:
 		server(int port, string ip);		
 		~server();
 		void run();				//服务器工作
 		static void RecvMsg(int conn);		//子线程工作的静态函数
-		static void HandleRequest(int conn, string str);
+		static void HandleRequest(int conn, string str, tuple<bool, string, string, int> &info);
 };
 
 #endif

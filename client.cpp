@@ -41,14 +41,23 @@ void client::run()
 //"static" is not needed
 void client::SendMsg(int conn)
 {
-	char sendbuf[1024];
+	//char sendbuf[1024];
 	while(1)
 	{
+		/*
 		memset(sendbuf, 0, sizeof(sendbuf));
 		cin>>sendbuf;
 		int ret=send(conn, sendbuf, strlen(sendbuf), 0);
 		//ends when input "exit" or closed on the other side.
 		if(strcmp(sendbuf, "exit")==0 || ret<=0)
+			break;
+		*/
+		string str;
+		cin>>str;
+		//send msg
+		str = "content:" + str;
+		int ret = send(conn, str.c_str(), str.length(), 0);
+		if(str == "conntent:exit"||ret <= 0)
 			break;
 	}
 }
@@ -61,9 +70,9 @@ void client::RecvMsg(int conn)
 	{
 		memset(buffer, 0, sizeof(buffer));
 		int len = recv(conn, buffer, sizeof(buffer), 0);
-		if(len <= 0)
+		if (len <= 0)
 			break;
-		cout<<"got a message from the server:"<<buffer<<endl;
+		cout<<buffer<<endl;
 	}
 }
 
@@ -86,6 +95,8 @@ void client::HandleClient(int conn)
 	//处理各种事物
 	while(1)
 	{
+		if(if_login)
+			break;
 		cin>>choice;
 		if(choice == 0)
 		{
@@ -145,21 +156,43 @@ void client::HandleClient(int conn)
 	}
 
 	//登录成功
-	if(if_login)
+	while(if_login && 1)
 	{
-		system("clear");//清空终端d
-        cout<<"        欢迎回来,"<<login_name<<endl;
-        cout<<" -------------------------------------------\n";
-        cout<<"|                                           |\n";
-        cout<<"|          请选择你要的选项：               |\n";
-        cout<<"|              0:退出                       |\n";
-        cout<<"|              1:发起单独聊天               |\n";
-        cout<<"|              2:发起群聊                   |\n";
-        cout<<"|                                           |\n";
-        cout<<" ------------------------------------------- \n\n";
-		
+		if(if_login)
+		{
+
+			system("clear");//清空终端d
+			cout<<"        欢迎回来,"<<login_name<<endl;
+			cout<<" -------------------------------------------\n";
+			cout<<"|                                           |\n";
+			cout<<"|          请选择你要的选项：               |\n";
+			cout<<"|              0:退出                       |\n";
+			cout<<"|              1:发起单独聊天               |\n";
+			cout<<"|              2:发起群聊                   |\n";
+			cout<<"|                                           |\n";
+			cout<<" ------------------------------------------- \n\n";
+		}
+		cin>>choice;
+		if(choice == 0)
+			break;
+		//私聊
+		if (choice == 1)
+		{
+			cout<<"请输入对方的用户名：";
+			string target_name, content;
+			cin>>target_name;
+			//向服务器发送目标用户 源用户
+			string sendstr("target:"+target_name+"from:"+login_name);
+			send(sock, sendstr.c_str(), sendstr.length(), 0);
+			cout<<"请输入你向说的话（输入exit退出）：\n";
+			thread t1(client::SendMsg, conn);	//发送进程
+			thread t2(client::RecvMsg, conn);	//接收进程
+			t1.join();
+			t2.join();
+		}
 	}
 
+	close(sock);
 }
 
 
