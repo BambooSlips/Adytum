@@ -17,6 +17,7 @@
 #include <mysql/mysql.h>
 #include <unordered_map>
 #include <pthread.h>
+#include <set>				//将处于同一群聊的套接字描述符放入同一个set之中
 
 using namespace std;
 

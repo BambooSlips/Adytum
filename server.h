@@ -27,12 +27,14 @@ class server {
 		static vector<bool> sock_arr;		//保存所有套接字描述符
 		static unordered_map<string, int> name_sock_map;	//名字和套接字描述符
 		static pthread_mutex_t name_sock_mutx;			//互斥锁 name_sock_map
+		static unordered_map<int, set<int> > group_map;		//记录群号和套接字描述符集合
+		static pthread_mutex_t group_mutx;			//互斥锁 group_map
 	public:
 		server(int port, string ip);		
 		~server();
 		void run();				//服务器工作
 		static void RecvMsg(int conn);		//子线程工作的静态函数
-		static void HandleRequest(int conn, string str, tuple<bool, string, string, int> &info);
+		static void HandleRequest(int conn, string str, tuple<bool, string, string, int, int> &info);
 };
 
 #endif
