@@ -18,6 +18,8 @@
 #include <unordered_map>
 #include <pthread.h>
 #include <set>				//将处于同一群聊的套接字描述符放入同一个set之中
+#include <hiredis/hiredis.h>		//连接redis
+#include <fstream>			//读取本地文件
 
 using namespace std;
 

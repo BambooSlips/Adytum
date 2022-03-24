@@ -119,6 +119,33 @@ void server::HandleRequest(int conn, string str, tuple<bool, string, string, int
 		cout<<mysql_error(con);
 	}
 
+	//连接redis数据库
+	redisContext *redis_target = redisConnect("127.0.0.1", 6379);
+	if (redis_target -> err)
+	{
+		redisFree(redis_target);
+		cout<<"连接redis失败"<<endl;
+	}
+
+	//接收cookie判断redis是否保存该用户的登录状态
+	if (str.find("cookie:") != str.npos)
+	{
+		string cookie = str.substr(7);
+		//hget cookie name
+		string redis_str = "hget " + cookie + " name";
+		redisReply *r = (redisReply*) redisCommand(redis_target, redis_str.c_str());
+		string send_res;
+
+		if (r -> str)
+		{
+			cout<<"查询redis结果:"<<r -> str <<endl;
+			send_res = r -> str;
+		}
+		else
+			send_res = "NULL";
+		send(conn, send_res.c_str(), send_res.length() + 1, 0);
+	}
+
 
 	//注册
 	if(str.find("name:") != str.npos)
@@ -166,6 +193,34 @@ void server::HandleRequest(int conn, string str, tuple<bool, string, string, int
 				string str1 = "ok";
 				if_login = true;
 				login_name = name;		//record the name of the user logined
+				pthread_mutex_lock(&name_sock_mutx);		//上锁
+				name_sock_map[login_name] = conn;
+				pthread_mutex_unlock(&name_sock_mutx);
+
+				//随机生成sessionid并发送到客户端
+				//sessionid 长度为10,由0-9或大小写字母随机组成，
+				//理论上(10+26+26)^10种组合
+				srand(time(NULL));
+				for (int i = 0; i < 10; i++)
+				{
+					int type = rand()%3;
+					if (type == 0)				//数字
+						str1 += '0' + rand() % 9;
+					else if (type == 1)			//小写字母
+						str1 += 'a' + rand() % 26;
+					else if (type == 2)			//大写字母
+						str1 += 'A' + rand() % 26;
+
+				}
+
+				//将sessionid存入redis
+				string redis_str = "hset " + str1.substr(2) + " name " + login_name;
+				redisReply *r = (redisReply * ) redisCommand(redis_target, redis_str.c_str());
+				//设置生存时间，默认300s
+				redis_str = "expire " + str1.substr(2) + " 300";
+				r = (redisReply *)redisCommand(redis_target, redis_str.c_str());
+				cout<<"随机生成的sessionid为："<<str1.substr(2)<<endl;
+
 				send(conn, str1.c_str(), str1.length()+1, 0);
 			}
 			//密码错误

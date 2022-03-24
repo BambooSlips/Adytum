@@ -45,12 +45,12 @@ void client::SendMsg(int conn)
 	while(1)
 	{
 		/*
-		memset(sendbuf, 0, sizeof(sendbuf));
-		cin>>sendbuf;
-		int ret=send(conn, sendbuf, strlen(sendbuf), 0);
+		   memset(sendbuf, 0, sizeof(sendbuf));
+		   cin>>sendbuf;
+		   int ret=send(conn, sendbuf, strlen(sendbuf), 0);
 		//ends when input "exit" or closed on the other side.
 		if(strcmp(sendbuf, "exit")==0 || ret<=0)
-			break;
+		break;
 		*/
 		string str;
 		cin>>str;
@@ -87,6 +87,31 @@ void client::HandleClient(int conn)
 	string name, pass, pass1;
 	bool if_login = false;		//记录是否已登录
 	string login_name;		//记录成功登录的用户名
+	string cookie_str;
+
+	//发送本地cookie,接收服务器答复，答复通过则不用再次输入用户名密码，直接登录
+	//先检查是否存在cookie文件
+	ifstream f("cookie");
+	if (f.good())
+	{
+		f >> cookie_str;
+		f.close();
+		cookie_str = "cookie:" + cookie_str;
+		//将cookie发送到服务器
+		send(sock, cookie_str.c_str(), cookie_str.length() + 1, 0);
+		//接收服务器答复
+		char cookie_ans[100];
+		memset(cookie_ans, 0, sizeof(cookie_ans));
+		recv(sock, cookie_ans, sizeof(cookie_ans), 0);
+		//判断服务器答复是否通过
+		string ans_str(cookie_ans);
+		//redis查询到cookie
+		if (ans_str != "NULL")
+		{
+			if_login = true;
+			login_name = ans_str;
+		}
+	}
 
 	cout<<"--------------------\n";
 	cout<<"|                  |\n";
@@ -128,6 +153,12 @@ void client::HandleClient(int conn)
 				{
 					if_login = true;
 					login_name = name;
+
+					//本地建立cookie文件保存sessionid
+					string tmpstr = recv_str.substr(2);
+					tmpstr = "cat > cookie <<end \n" + tmpstr + "\nend";
+					system(tmpstr.c_str());
+
 					cout<<"登录成功！\n\n";
 					break;
 				}
@@ -151,13 +182,13 @@ void client::HandleClient(int conn)
 				else
 					cout<<"两次密码输入不一致！\n\n";
 			}
+			name = "name:" + name;
+			pass = "pass:" + pass;
+			string str = name + pass;
+			send(conn, str.c_str(), str.length(), 0);
+			cout<<"注册成功！\n";
+			cout<<"\n继续输入你的选择：";
 		}
-		name = "name:" + name;
-		pass = "pass:" + pass;
-		string str = name + pass;
-		send(conn, str.c_str(), str.length(), 0);
-		cout<<"注册成功！\n";
-		cout<<"\n继续输入你的选择：";
 	}
 
 	//登录成功
