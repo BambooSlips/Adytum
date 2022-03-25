@@ -55,14 +55,14 @@ a Linux chat room written in C++
 
 ## 例子 Example  
 
-![2022-03-25_18-24](/run/media/breeze/Data/Code/C++/Beyond/Adytum/img/2022-03-25_18-24.png)
+![2022-03-25_18-24](img/2022-03-25_18-24.png)
 
-![2022-03-25_18-29](/run/media/breeze/Data/Code/C++/Beyond/Adytum/img/2022-03-25_18-29.png)
+![2022-03-25_18-29](img/2022-03-25_18-29.png)
 
-![2022-03-25_18-34](/run/media/breeze/Data/Code/C++/Beyond/Adytum/img/2022-03-25_18-34.png)
+![2022-03-25_18-34](img/2022-03-25_18-34.png)
 
-![2022-03-25_18-36_1](/run/media/breeze/Data/Code/C++/Beyond/Adytum/img/2022-03-25_18-36_1.png)
+![2022-03-25_18-36_1](img/2022-03-25_18-36_1.png)
 
-![2022-03-25_18-36](/run/media/breeze/Data/Code/C++/Beyond/Adytum/img/2022-03-25_18-36.png)
+![2022-03-25_18-36](img/2022-03-25_18-36.png)
 
-![2022-03-25_18-30](/run/media/breeze/Data/Code/C++/Beyond/Adytum/img/2022-03-25_18-30.png)
+![2022-03-25_18-30](img/2022-03-25_18-30.png)
