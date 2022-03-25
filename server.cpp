@@ -1,24 +1,28 @@
 #include "server.h"
 
-unordered_map<int, set<int> >server::group_map;	//记录群号和套接字描述符集合
-pthread_mutex_t server::group_mutx;		//互斥锁
-
-vector<bool> server::sock_arr(1024, false);	//use command "ulimit -n" to check
+vector<bool> server::sock_arr(10240, false);	//use command "ulimit -n" to check
 unordered_map<string, int> server::name_sock_map;
+unordered_map<int, set<int> >server::group_map;	//记录群号和套接字描述符集合
+unordered_map<string, string> server::from_to_map;	//私聊
+pthread_mutex_t server::group_mutx;		//互斥锁
 pthread_mutex_t server::name_sock_mutx;
+pthread_mutex_t server::from_mutex;		//自旋锁 from_to_map
+
 server::server(int port, string ip): server_port(port),server_ip(ip) 
 {
 	pthread_mutex_init(&name_sock_mutx, NULL);  //创建互斥锁
+	pthread_mutex_init(&group_mutx, NULL);
+	pthread_mutex_init(&from_mutex, NULL);
 }
 
 //析构
 server::~server() 
 {
 	/*
-	for(auto conn:sock_arr)
-		close(conn);
-	close(server_sockfd);
-	*/
+	   for(auto conn:sock_arr)
+	   close(conn);
+	   close(server_sockfd);
+	   */
 	//close the sock that is still open
 	for(int i = 0; i < sock_arr.size(); i++)
 	{
@@ -31,6 +35,87 @@ server::~server()
 //服务器开始服务
 void server::run()
 {
+	//listen的backlog大小
+	int LISTENQ = 200;
+	int i, maxi, listenfd, connfd, sockfd, epfd, nfds;
+	ssize_t n;
+	socklen_t client;
+	//声明epoll_event结构体变量，eev用于注册事件，数组用于回传要处理的事件
+	struct epoll_event ev, events[10240];
+	//生成用于处理accept的epoll专用文件描述符
+	epfd = epoll_create(10240);
+	struct sockaddr_in clientaddr;
+	struct sockaddr_in serveraddr;
+	listenfd = socket(PF_INET, SOCK_STREAM, 0);
+	//把socket设为非阻塞方式
+	setnonblocking(listenfd);
+	//设置与要处理的事件相关的文件描述符
+	ev.data.fd = listenfd;
+	//设置要处理的事件类型
+	ev.events = EPOLLIN|EPOLLET;
+	//注册epoll事件
+	epoll_ctl(epfd, EPOLL_CTL_ADD, listenfd, &ev);
+	//设置serveraddr
+	bzero(&serveraddr,sizeof(serveraddr));
+	serveraddr.sin_family = AF_INET;
+	serveraddr.sin_addr.s_addr = inet_addr(server_ip.c_str());		//服务器ip
+	serveraddr.sin_port = htons(server_port);
+	bind(listenfd, (sockaddr *)&serveraddr, sizeof(serveraddr));
+	listen(listenfd, LISTENQ);
+	client = sizeof(clientaddr);
+	maxi = 0;
+
+	/* 定义一个10线程的线程池 */
+	boost::asio::thread_pool tp(10);
+
+	while (1)
+	{
+		cout<<"--------------------"<<endl;
+		cout<<"epoll_wait阻塞中"<<endl;
+		//等待epoll事件发生
+		nfds = epoll_wait(epfd, events, 10240, -1);	//-1:timeout 一直阻塞到有事件发生 0:立即返回 x:等待x ms
+		cout<<"epoll_wait返回， 有事件发生"<<endl;
+		//处理发生的所有事件
+		for (i = 0; i < nfds; ++i)
+		{
+			//有新客户端连接服务器
+			if (events[i].data.fd == listenfd)
+			{
+				connfd = accept(listenfd, (sockaddr *)&clientaddr, &client);
+				if (connfd < 0)
+				{
+					perror("connfd < 0");
+					exit(1);
+				}
+				else
+				{
+					cout<<"用户"<<inet_ntoa(clientaddr.sin_addr)<<"正在连接\n";
+				}
+				//设置用于读操作的文件描述符
+				ev.data.fd = connfd;
+				//设置用于注册的读操作事件，ET边缘触发
+				//使用EPOLLONESHOT防止多线程处理同一socket
+				ev.events = EPOLLIN|EPOLLET|EPOLLONESHOT;
+				//边缘触发将套接字设为非阻塞
+				setnonblocking(connfd);
+				//注册ev
+				epoll_ctl(epfd, EPOLL_CTL_ADD, connfd, &ev);
+			}
+			else if (events[i].events&EPOLLIN)
+			{
+				sockfd = events[i].data.fd;
+				events[i].data.fd = -1;
+				cout<<"接收到读事件"<<endl;
+
+				string recv_str;
+				//加入任务队列，处理事件
+				boost::asio::post(boost::bind(RecvMsg, epfd, sockfd));
+			}
+
+		}
+	}
+	close(listenfd);
+	/*
 	//定义sockfd
 	server_sockfd = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -43,15 +128,15 @@ void server::run()
 	//bind 0:s -1:f
 	if (bind(server_sockfd, (struct sockaddr *)&server_sockaddr, sizeof(server_sockaddr))==-1)
 	{
-		perror("bind");
-		exit(1);
+	perror("bind");
+	exit(1);
 	}
 
 	//listen 0:s  -1:f
 	if(listen(server_sockfd,20) == -1)
 	{
-		perror("listen");//输出错误原因
-		exit(1);//结束程序
+	perror("listen");//输出错误原因
+	exit(1);//结束程序
 	}
 
 	//客户端套接字
@@ -61,47 +146,83 @@ void server::run()
 	//不断取出新连接并创建子线程为其服务
 	while(1)
 	{
-		int conn = accept(server_sockfd, (struct sockaddr*)&client_addr, &length);
-		std:: cout<<conn;
-		if(conn<0)
-		{
-			perror("accept");
-			exit(1);
-		}
-		cout<<"文件描述符为："<<conn<<"的客户端成功连接\n";
-		sock_arr.push_back(conn);
-		//创建线程
-		thread t(server::RecvMsg, conn);
-		t.detach();		//置为分离状态，不可用join,join会导致主线程阻塞
+	int conn = accept(server_sockfd, (struct sockaddr*)&client_addr, &length);
+	std:: cout<<conn;
+	if(conn<0)
+	{
+	perror("accept");
+	exit(1);
 	}
+	cout<<"文件描述符为："<<conn<<"的客户端成功连接\n";
+	sock_arr.push_back(conn);
+	//创建线程
+	thread t(server::RecvMsg, conn);
+	t.detach();		//置为分离状态，不可用join,join会导致主线程阻塞
+	}
+	*/
 }
 
 //子线程工作的静态函数
 //不可加static(编译器报错)
-void server::RecvMsg(int conn)
+void server::RecvMsg(int epollfd, int conn)
 {
-	tuple<bool, string, string, int, int> info; //if_login login_name target_name target_conn
+        //if_login login_name target_name target_conn group_num
+	tuple<bool, string, string, int, int> info;
 	get<0>(info) = false;	//将if_login置false
 	get<3>(info) = -1;	//target_conn置-1
 
-	char buffer[1024];
+	string recv_str;
 	while(1)
 	{
-		memset(buffer, 0, sizeof(buffer));
-		int len = recv(conn, buffer, sizeof(buffer), 0);
-		if(strcmp(buffer, "context:exit") == 0 || len <= 0)
+		char buf[10];
+		memset(buf, 0, sizeof(buf));
+		int ret  = recv(conn, buf, sizeof(buf), 0);
+		if(ret < 0)
 		{
-			close(conn);
-			sock_arr[conn] = false;
-			break;
+			cout<<"recv返回值小于0"<<endl;
+			//对于非阻塞IO，下面的事件成立标识数据已经全部读取完毕
+			if((errno == EAGAIN) || (errno == EWOULDBLOCK)){
+				printf("数据读取完毕\n");
+				cout<<"接收到的完整内容为："<<recv_str<<endl;
+				cout<<"开始处理事件"<<endl;
+				break;
+			}
+			cout<<"errno:"<<errno<<endl;
+			return;
 		}
-		cout<<"收到套接字描述符为"<<conn<<"发来的消息："<<buffer<<endl;
-		string str(buffer);
-		HandleRequest(conn, str, info);
+		else if(ret == 0){
+			cout<<"recv返回值为0"<<endl;
+			return;
+		}
+		else{
+			printf("接收到内容如下: %s\n",buf);
+			string tmp(buf);
+			recv_str+=tmp;
+		}
 	}
+	string str=recv_str;
+	HandleRequest(epollfd,conn,str,info);
+
+	/*
+	   char buffer[1024];
+	   while(1)
+	   {
+	   memset(buffer, 0, sizeof(buffer));
+	   int len = recv(conn, buffer, sizeof(buffer), 0);
+	   if(strcmp(buffer, "context:exit") == 0 || len <= 0)
+	   {
+	   close(conn);
+	   sock_arr[conn] = false;
+	   break;
+	   }
+	   cout<<"收到套接字描述符为"<<conn<<"发来的消息："<<buffer<<endl;
+	   string str(buffer);
+	   HandleRequest(conn, str, info);
+	   }
+	   */
 }
 
-void server::HandleRequest(int conn, string str, tuple<bool, string, string, int, int> &info)
+void server::HandleRequest(int epollfd, int conn, string str, tuple<bool, string, string, int, int> &info)
 {
 	char buffer[1024];
 	string name, pass;
@@ -243,20 +364,38 @@ void server::HandleRequest(int conn, string str, tuple<bool, string, string, int
 	else if(str.find("target:") != str.npos)
 	{
 		int pos1 = str.find("from");
-		string target = str.substr(7, pos1-7), from = str.substr(pos1+4);
+		string target = str.substr(7, pos1-7), from = str.substr(pos1+5);
 		target_name = target;
 		if (name_sock_map.find(target) == name_sock_map.end())
 			cout<<"源用户"<<login_name<<"，目标用户"<<target_name<<"尚未登录，无法发起私聊\n";
 		else
 		{
+			pthread_mutex_lock(&from_mutex);
+			from_to_map[from] = target;
+			cout<<"from"<<from<<" target:"<<target<<endl;
+			pthread_mutex_unlock(&from_mutex);
+			login_name = from;
 			cout<<"源用户"<<login_name<<"向目标用户"<<target_name<<"发起的私聊将建立";
 			cout<<"，目标用户的套接字描述符为"<<name_sock_map[target]<<endl;
 			target_conn = name_sock_map[target];
 		}
 	}
 	//接收消息并转发
-	else if(str.find("connect:") != str.npos)
+	else if(str.find("content:") != str.npos)
 	{
+		target_conn = -1;
+		cout<<"转发方法：\n";
+		//根据两个map找出当前用户和目标用户
+		for (auto i:name_sock_map)
+		{
+			if (i.second == conn)
+			{
+				login_name = i.first;
+				target_name = from_to_map[i.first];
+				target_conn = name_sock_map[target_name];
+				break;
+			}
+		}
 		if (target_conn == -1)
 		{
 			cout<<"找不到目标用户"<<target_name<<"的套接字，将尝试重新寻找目标用户的套接字\n";
@@ -279,9 +418,19 @@ void server::HandleRequest(int conn, string str, tuple<bool, string, string, int
 	}
 	else if (str.find("group:") != str.npos)
 	{
+		cout<<"绑定群聊号方法\n";
 		string recv_str(str);
 		string num_str = recv_str.substr(6);
 		group_num = stoi(num_str);
+		//找出当前用户
+		for (auto i : name_sock_map)
+		{
+			if (i.second == conn)
+			{
+				login_name = i.first;
+				break;
+			}
+		}
 		cout<<"用户"<<login_name<<"绑定的群号为:"<<num_str<<endl;
 		pthread_mutex_lock(&group_mutx);	//加锁
 		group_map[group_num].insert(conn);
@@ -290,6 +439,23 @@ void server::HandleRequest(int conn, string str, tuple<bool, string, string, int
 	//广播群聊消息
 	else if (str.find("gr_message:") != str.npos)
 	{
+		cout<<"广播群聊信息方法\n";
+		for (auto i : name_sock_map)
+		{
+			if (i.second == conn)
+			{
+				login_name = i.first;
+				break;
+			}
+		}
+		for (auto i : group_map)
+		{
+			if (i.second.find(conn) != i.second.end())
+			{
+				group_num = i.first;
+				break;
+			}
+		}
 		string send_str(str);
 		send_str = send_str.substr(11);
 		send_str = "[" + login_name + "]:" + send_str;
@@ -301,6 +467,16 @@ void server::HandleRequest(int conn, string str, tuple<bool, string, string, int
 		}
 	}
 
+	//线程工作完毕后重新注册事件
+	epoll_event event;
+	event.data.fd=conn;
+	event.events=EPOLLIN|EPOLLET|EPOLLONESHOT;
+	epoll_ctl(epollfd,EPOLL_CTL_MOD,conn,&event);
+
+	mysql_close(con);
+	if(!redis_target->err)
+		redisFree(redis_target);
+
 	//更新
 	get<0>(info) = if_login;
 	get<1>(info) = login_name;
@@ -308,4 +484,24 @@ void server::HandleRequest(int conn, string str, tuple<bool, string, string, int
 	get<3>(info) = target_conn;
 	get<4>(info) = group_num;
 
+}
+
+//将文件描述符置为非阻塞状态
+void server::setnonblocking(int sock)
+{
+	int opts;
+	//fcntl可改变已打开的文件性质 GETFL：取得文件描述符的状态标志
+	opts = fcntl(sock, F_GETFL);
+	if (opts < 0)
+	{
+		perror("fcntl(sock, GETFL");
+		exit(1);
+	}
+	//F_SETFL 设置文件描述符状态标志
+	opts = opts|O_NONBLOCK;
+	if (fcntl(sock, F_SETFL, opts) < 0)
+	{
+		perror("fcntl(sock, F_SETFL, opts)");
+		exit(1);
+	}
 }

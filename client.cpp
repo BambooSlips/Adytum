@@ -62,9 +62,19 @@ void client::SendMsg(int conn)
 			str = "gr_message:" + str;
 
 		int ret = send(abs(conn), str.c_str(), str.length(), 0);
-		if(str == "conntent:exit"||ret <= 0)
-			break;
+		//if(str == "content:exit"||ret <= 0)
+		 if (str=="content:exit"|| ret<=0)
+		 {
+			 cout<<"quiting..."<<endl;
+			 break;
+		 }
+		 else if (str=="gr_message:exit"|| ret<=0)
+		 {
+			 cout<<"quiting..."<<endl;
+			 break;
+		 }
 	}
+	return;
 }
 
 //"static" is not needed
@@ -212,7 +222,7 @@ void client::HandleClient(int conn)
 		if(choice == 0)
 			break;
 		//私聊
-		if (choice == 1)
+		else if (choice == 1)
 		{
 			cout<<"请输入对方的用户名：";
 			string target_name, content;
